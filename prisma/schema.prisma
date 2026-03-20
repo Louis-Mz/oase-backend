@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model location {
+  loc_id            Int               @id @default(autoincrement())
+  loc_longitude     Float
+  loc_latitude      Float
+  loc_type          location_loc_type
+  loc_desc          String?           @db.VarChar(1024)
+  loc_available     Boolean
+  loc_created_by    Int
+  loc_creation_date DateTime          @db.Date
+  users             users             @relation(fields: [loc_created_by], references: [u_id], onDelete: NoAction, onUpdate: NoAction, map: "location_ibfk_1")
+  reviews           reviews[]
+
+  @@index([loc_created_by], map: "loc_created_by")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model reviews {
+  r_id         Int      @id @default(autoincrement())
+  r_rating     Int
+  r_comment    String?  @db.VarChar(1024)
+  r_written_by Int
+  r_loc_id     Int
+  r_created_on DateTime @db.Date
+  users        users    @relation(fields: [r_written_by], references: [u_id], onDelete: NoAction, onUpdate: NoAction, map: "reviews_ibfk_1")
+  location     location @relation(fields: [r_loc_id], references: [loc_id], onDelete: NoAction, onUpdate: NoAction, map: "reviews_ibfk_2")
+
+  @@index([r_loc_id], map: "r_loc_id")
+  @@index([r_written_by], map: "r_written_by")
+}
+
+model users {
+  u_id            Int        @id @default(autoincrement())
+  u_name          String     @unique(map: "u_name") @db.VarChar(16)
+  u_mail          String     @unique(map: "u_mail") @db.VarChar(60)
+  u_password      String     @db.VarChar(255)
+  u_score         Int
+  u_creation_date DateTime   @db.Date
+  location        location[]
+  reviews         reviews[]
+}
+
+enum location_loc_type {
+  toilet
+  fountain
+}
