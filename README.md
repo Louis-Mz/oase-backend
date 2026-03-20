@@ -1316,3 +1316,219 @@ On va tester si ton "videur" mathématique fonctionne !
 1. Renvoie **exactement la même requête** (Test B) une deuxième fois.
 2. 👉 **Résultat attendu :** Erreur 403 *"Vous avez déjà noté ce point d'eau aujourd'hui."*
 
+---
+---
+---
+
+C'est une excellente nouvelle pour la réussite de tes tests ! Tu as fait le plus dur.
+
+Concernant le changement de l'équipe Frontend (de Kotlin vers React) : **OUI, ton backend est 100% compatible et tu n'as absolument rien à changer !** 🤩
+
+C'est exactement pour cela qu'on a choisi de faire une **API REST**. Ton serveur est comme un restaurant : il se fiche de savoir si le client vient à pied (React Web), en voiture (Android), ou à vélo (iOS). Tant que le client passe sa commande en parlant le bon langage (le format **JSON** via des requêtes HTTP), ton serveur lui servira les données. 
+
+*Petit bonus de pro :* Au tout début, je t'ai fait installer et activer `cors` (`app.use(cors())` dans `index.ts`). C'est un outil de sécurité spécifique aux navigateurs web. Ton backend est donc **déjà configuré** pour accepter les requêtes d'une application React ! Tu as un coup d'avance sur eux. 😎
+
+---
+
+### La suite : La Gamification et les Détails d'un point d'eau
+
+Maintenant qu'on a géré l'ajout et les notes, il nous reste deux fonctionnalités clés du Cahier des Charges pour finaliser le cœur de l'API :
+
+1. **Le Leaderboard (EF5)** : Afficher le classement des meilleurs contributeurs (ceux qui ont le plus de points).
+2. **La fiche détaillée d'un point d'eau** : Quand on clique sur une fontaine dans React, il faut envoyer ses infos, ses commentaires, et calculer sa **note moyenne**.
+
+Voici comment on va faire ça.
+
+---
+
+### Étape 1 : Le Leaderboard (Classement des utilisateurs)
+
+1. Dans le dossier `src/controllers/`, crée un nouveau fichier **`userController.ts`** :
+
+```typescript
+import { Request, Response } from 'express';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// --- RÉCUPÉRER LE CLASSEMENT (LEADERBOARD) ---
+export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // On demande à Prisma de chercher les utilisateurs, 
+    // de les trier par score décroissant (desc), et d'en prendre seulement 10.
+    const topUsers = await prisma.users.findMany({
+      orderBy: {
+        u_score: 'desc'
+      },
+      take: 10,
+      select: {
+        u_id: true,
+        u_name: true,
+        u_score: true
+        // On NE SÉLECTIONNE SURTOUT PAS le mot de passe ou l'email ici !
+      }
+    });
+
+    res.status(200).json(topUsers);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur lors de la récupération du classement." });
+  }
+};
+```
+
+2. Crée le fichier de route associé : `src/routes/userRoutes.ts` :
+
+```typescript
+import { Router } from 'express';
+import { getLeaderboard } from '../controllers/userController';
+
+const router = Router();
+
+// GET /api/users/leaderboard
+router.get('/leaderboard', getLeaderboard);
+
+export default router;
+```
+
+---
+
+### Étape 2 : Fiche détaillée d'un lieu (Moyenne + Avis)
+
+On va ajouter une nouvelle fonction dans notre contrôleur de lieux existant.
+
+1. Ouvre **`src/controllers/locationController.ts`**.
+2. Ajoute ce code **à la fin du fichier** :
+
+```typescript
+// --- RÉCUPÉRER UN LIEU SPÉCIFIQUE AVEC SA NOTE MOYENNE ---
+export const getLocationById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string; // L'ID passé dans l'URL (ex: /api/locations/1)
+
+    // 1. On rassure TypeScript : si pas d'ID ou si ce n'est pas un nombre, on arrête tout
+    if (!id || isNaN(parseInt(id))) {
+      res.status(400).json({ error: "ID invalide ou manquant." });
+      return;
+    }
+
+    const locationId = parseInt(id, 10); // Le "10" précise qu'on compte en base 10
+
+    // 2. On cherche le lieu ET on inclut tous ses avis (reviews) liés
+    const location = await prisma.location.findUnique({
+      where: { loc_id: locationId },
+      include: {
+        reviews: {
+          select: {
+            r_id: true,
+            r_rating: true,
+            r_comment: true,
+            r_created_on: true,
+            users: { select: { u_name: true } } // Relation correcte avec la BDD !
+          }
+        }
+      }
+    });
+
+    if (!location) {
+      res.status(404).json({ error: "Point d'eau introuvable." });
+      return;
+    }
+
+    // Calcul de la note moyenne mathématique
+    let averageRating = 0;
+    if (location.reviews.length > 0) {
+      const sum = location.reviews.reduce((acc, review) => acc + review.r_rating, 0);
+      averageRating = sum / location.reviews.length;
+    }
+
+    // On renvoie un bel objet formaté pour l'équipe React
+    res.status(200).json({
+      locationDetails: location,
+      totalReviews: location.reviews.length,
+      averageRating: parseFloat(averageRating.toFixed(1))
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur lors de la récupération du lieu." });
+  }
+};
+```
+
+3. Maintenant, va dans **`src/routes/locationRoutes.ts`** pour brancher cette nouvelle URL.
+Modifie le fichier pour ajouter la ligne pointée par la flèche :
+
+```typescript
+import { Router } from 'express';
+import { addLocation, getLocations, getLocationById } from '../controllers/locationController'; // <--- Ajouter l'import
+import { verifyToken } from '../middlewares/authMiddleware';
+
+const router = Router();
+
+router.get('/', verifyToken, getLocations);
+router.post('/', verifyToken, addLocation);
+
+// GET /api/locations/:id -> Détails d'un lieu (On ne met pas verifyToken ici car tout le monde peut voir une fontaine)
+router.get('/:id', getLocationById); // <--- NOUVELLE ROUTE
+
+export default router;
+```
+
+---
+
+### Étape 3 : Brancher les utilisateurs dans le serveur principal
+
+Dernière étape de configuration, on ouvre **`src/index.ts`** pour ajouter la route des utilisateurs (leaderboard) :
+
+```typescript
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/authRoutes';
+import locationRoutes from './routes/locationRoutes';
+import reviewRoutes from './routes/reviewRoutes';
+import userRoutes from './routes/userRoutes'; // <--- Importer
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/locations', locationRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/users', userRoutes); // <--- Brancher l'URL
+
+app.get('/', (req: Request, res: Response) => {
+  res.send('🚀 Serveur OASE Waterfinder est en ligne !');
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
+});
+```
+
+---
+
+### Les Tests (Thunder Client)
+
+C'est le moment de profiter de ton travail ! Fais ces deux tests très rapides :
+
+**Test A : Le Leaderboard**
+1. Requête **GET** sur `http://localhost:3000/api/users/leaderboard`
+2. Pas besoin de JSON ni de Token.
+3. *Résultat attendu :* Tu vas voir la liste des utilisateurs, avec "Thomas" en premier qui a 10 points (grâce à l'avis qu'il a laissé tout à l'heure) !
+
+**Test B : La fiche de la Fontaine**
+1. Requête **GET** sur `http://localhost:3000/api/locations/1` (En remplaçant `1` par l'ID de la fontaine que tu as créée).
+2. *Résultat attendu :* Tu vas voir toutes les infos de la fontaine, la note que Thomas lui a donnée, et un champ `"averageRating"` calculé automatiquement !
+
+---
+---
+---
+
+
