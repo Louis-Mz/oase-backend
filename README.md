@@ -1072,4 +1072,247 @@ Si tu as bien mis l'espace après `Bearer` et que ton serveur tourne, tu vas voi
 
 ### Le 20/03/2026 :
 
+Excellent ! C'est le moment de briller sur la partie métier. 🌟
+
+On va s'attaquer au plus gros défi technique de ton Cahier des Charges (CdC) : **Le système d'Avis (Reviews)**.
+
+Tu as deux exigences majeures à respecter ici :
+*   **EF2 :** Un utilisateur ne peut noter un point d'eau que s'il est à **moins de 300 mètres**.
+*   **EF7 :** Un utilisateur ne peut noter un point spécifique qu'**une seule fois par jour**.
+*   *Bonus (EF5)* : On va en profiter pour ajouter des points de "Gamification" à l'utilisateur quand il laisse un avis !
+
+Voici le plan d'attaque complet.
+
+---
+
+### Étape 1 : L'outil de calcul de distance (La Formule Magique)
+
+Comme la Terre est ronde, on ne peut pas juste faire une simple soustraction de coordonnées GPS. On doit utiliser la "Formule de Haversine".
+
+1. Dans le dossier `src/`, crée un dossier **`utils`**.
+2. Dedans, crée un fichier **`distance.ts`** et colle ce code :
+
+```typescript
+// src/utils/distance.ts
+
+// Convertit des degrés en radians
+function deg2rad(deg: number): number {
+  return deg * (Math.PI / 180);
+}
+
+// Calcule la distance en mètres entre deux points GPS
+export function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // Rayon de la Terre en mètres
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
+  const distance = R * c;
+  
+  return distance; // Retourne la distance en mètres
+}
+```
+
+---
+
+### Étape 2 : Le Contrôleur des Avis (Le Cerveau)
+
+C'est ici qu'on va appliquer toutes les règles de sécurité.
+Dans `src/controllers/`, crée un fichier **`reviewController.ts`** et colle ce code (lis les commentaires, c'est là que la magie opère !) :
+
+```typescript
+// src/controllers/reviewController.ts
+import { Response } from 'express';
+import { PrismaClient } from '@prisma/client';
+import { AuthRequest } from '../middlewares/authMiddleware';
+import { getDistanceInMeters } from '../utils/distance';
+
+const prisma = new PrismaClient();
+
+export const addReview = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // 1. On récupère les infos envoyées par l'appli Kotlin
+    // Note : L'appli Kotlin DOIT nous envoyer la position actuelle de l'utilisateur !
+    const { locationId, rating, comment, userLat, userLong } = req.body;
+    const userId = req.user.userId;
+
+    if (!locationId || !rating || !userLat || !userLong) {
+      res.status(400).json({ error: "Il manque des informations (locationId, rating, userLat, userLong)." });
+      return;
+    }
+
+    if (rating < 1 || rating > 5) {
+      res.status(400).json({ error: "La note doit être entre 1 et 5." });
+      return;
+    }
+
+    // 2. Vérifier si le point d'eau existe
+    const location = await prisma.location.findUnique({
+      where: { loc_id: locationId }
+    });
+
+    if (!location) {
+      res.status(404).json({ error: "Ce point d'eau n'existe pas." });
+      return;
+    }
+
+    // 3. LA RÈGLE DES 300 MÈTRES (EF2) 🚨
+    const distance = getDistanceInMeters(userLat, userLong, location.loc_latitude, location.loc_longitude);
+    
+    if (distance > 300) {
+      res.status(403).json({ 
+        error: `Vous êtes trop loin ! Vous devez être à moins de 300m (Distance actuelle: ${Math.round(distance)}m).` 
+      });
+      return;
+    }
+
+    // 4. LA RÈGLE "UNE FOIS PAR JOUR" (EF7) 📆
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // On remet l'heure à 00:00:00 pour cibler "aujourd'hui"
+
+    const existingReviewToday = await prisma.reviews.findFirst({
+      where: {
+        r_written_by: userId,
+        r_loc_id: locationId,
+        r_created_on: { gte: today } // gte = Greater Than or Equal (Depuis ce matin 00h)
+      }
+    });
+
+    if (existingReviewToday) {
+      res.status(403).json({ error: "Vous avez déjà noté ce point d'eau aujourd'hui." });
+      return;
+    }
+
+    // 5. Tout est bon, on sauvegarde l'avis !
+    const newReview = await prisma.reviews.create({
+      data: {
+        r_rating: rating,
+        r_comment: comment || null,
+        r_written_by: userId,
+        r_loc_id: locationId,
+        r_created_on: new Date() // La date SQL demande un format précis, new Date() gère ça
+      }
+    });
+
+    // 6. GAMIFICATION (EF5) : On donne +10 points à l'utilisateur pour sa contribution !
+    await prisma.users.update({
+      where: { u_id: userId },
+      data: { u_score: { increment: 10 } }
+    });
+
+    res.status(201).json({ 
+      message: "Merci pour votre avis ! Vous avez gagné 10 points.", 
+      review: newReview 
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur serveur lors de l'ajout de l'avis." });
+  }
+};
+```
+
+---
+
+### Étape 3 : La Route des Avis
+
+Dans `src/routes/`, crée **`reviewRoutes.ts`** :
+
+```typescript
+// src/routes/reviewRoutes.ts
+import { Router } from 'express';
+import { addReview } from '../controllers/reviewController';
+import { verifyToken } from '../middlewares/authMiddleware';
+
+const router = Router();
+
+// POST /api/reviews -> Ajouter un avis (il faut être connecté)
+router.post('/', verifyToken, addReview);
+
+export default router;
+```
+
+---
+
+### Étape 4 : Brancher au Serveur Principal
+
+Comme pour les lieux, ouvre ton **`src/index.ts`** et ajoute la nouvelle route :
+
+```typescript
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/authRoutes';
+import locationRoutes from './routes/locationRoutes';
+import reviewRoutes from './routes/reviewRoutes'; // <--- Importer
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/locations', locationRoutes);
+app.use('/api/reviews', reviewRoutes); // <--- Brancher l'URL
+
+app.get('/', (req: Request, res: Response) => {
+  res.send('🚀 Serveur OASE Waterfinder est en ligne !');
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
+});
+```
+
+---
+
+### Étape 5 : Le Test Diabolique 😈 (Dans Thunder Client)
+
+On va tester si ton "videur" mathématique fonctionne !
+
+**Prérequis :**
+1. Tu dois avoir un lieu dans ta BDD (celui qu'on a créé tout à l'heure à `lat: 48.8566`, `long: 2.3522`). S'il a l'ID `1`, garde-le en tête.
+2. Tu dois récupérer ton fameux **Token Bearer** (refais un Login si besoin).
+
+**Test A : L'utilisateur essaie de tricher (il est trop loin)**
+1. Crée une requête **POST** vers `http://localhost:3000/api/reviews`
+2. Mets ton Token dans l'onglet **Headers** (`Authorization` -> `Bearer ton_token`).
+3. Dans **Body** (JSON), on va simuler que l'utilisateur est à Marseille (très loin de Paris 48.85) :
+   ```json
+   {
+     "locationId": 1,
+     "rating": 5,
+     "comment": "Super fontaine !",
+     "userLat": 43.2965, 
+     "userLong": 5.3698
+   }
+   ```
+4. Envoie.
+👉 **Résultat attendu :** Erreur 403 *"Vous êtes trop loin ! Vous devez être à moins de 300m"*. (Magique, non ?)
+
+**Test B : L'utilisateur est juste à côté**
+1. Change les coordonnées de l'utilisateur pour qu'elles soient presque identiques à celles de la fontaine :
+   ```json
+   {
+     "locationId": 1,
+     "rating": 4,
+     "comment": "L'eau est bien fraîche",
+     "userLat": 48.8568, 
+     "userLong": 2.3524
+   }
+   ```
+2. Envoie.
+👉 **Résultat attendu :** Status 201 *"Merci pour votre avis ! Vous avez gagné 10 points."*
+
+**Test C : Le Spam (La règle 1 fois/jour)**
+1. Renvoie **exactement la même requête** (Test B) une deuxième fois.
+2. 👉 **Résultat attendu :** Erreur 403 *"Vous avez déjà noté ce point d'eau aujourd'hui."*
 
