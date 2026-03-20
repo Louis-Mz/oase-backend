@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { addLocation, getLocations } from '../controllers/locationController';
+import { addLocation, getLocations, getLocationById } from '../controllers/locationController';
 import { verifyToken } from '../middlewares/authMiddleware';
 
 const router = Router();
@@ -12,5 +12,8 @@ router.get('/', verifyToken, getLocations);
 
 // POST /api/locations -> Ajouter un point (il faut être connecté)
 router.post('/', verifyToken, addLocation);
+
+// GET /api/locations/:id -> Détails d'un lieu (On ne met pas verifyToken ici car tout le monde peut voir une fontaine)
+router.get('/:id', getLocationById); // <--- NOUVELLE ROUTE
 
 export default router;

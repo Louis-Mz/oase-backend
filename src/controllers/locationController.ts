@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middlewares/authMiddleware';
 
@@ -48,5 +48,59 @@ export const getLocations = async (req: AuthRequest, res: Response): Promise<voi
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erreur lors de la récupération des lieux." });
+  }
+};
+
+// --- RÉCUPÉRER UN LIEU SPÉCIFIQUE AVEC SA NOTE MOYENNE ---
+export const getLocationById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string; // L'ID passé dans l'URL (ex: /api/locations/1)
+
+    // 1. On rassure TypeScript : si pas d'ID ou si ce n'est pas un nombre, on arrête tout
+    if (!id || isNaN(parseInt(id))) {
+      res.status(400).json({ error: "ID invalide ou manquant." });
+      return;
+    }
+
+    const locationId = parseInt(id, 10); // Le "10" précise qu'on compte en base 10
+
+    // 2. On cherche le lieu ET on inclut tous ses avis (reviews) liés
+    const location = await prisma.location.findUnique({
+      where: { loc_id: locationId },
+      include: {
+        reviews: {
+          select: {
+            r_id: true,
+            r_rating: true,
+            r_comment: true,
+            r_created_on: true,
+            users: { select: { u_name: true } } // Relation correcte avec la BDD !
+          }
+        }
+      }
+    });
+
+    if (!location) {
+      res.status(404).json({ error: "Point d'eau introuvable." });
+      return;
+    }
+
+    // Calcul de la note moyenne mathématique
+    let averageRating = 0;
+    if (location.reviews.length > 0) {
+      const sum = location.reviews.reduce((acc, review) => acc + review.r_rating, 0);
+      averageRating = sum / location.reviews.length;
+    }
+
+    // On renvoie un bel objet formaté pour l'équipe React
+    res.status(200).json({
+      locationDetails: location,
+      totalReviews: location.reviews.length,
+      averageRating: parseFloat(averageRating.toFixed(1))
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur lors de la récupération du lieu." });
   }
 };

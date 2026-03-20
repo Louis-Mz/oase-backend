@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import authRoutes from './routes/authRoutes';
 import locationRoutes from './routes/locationRoutes';
 import reviewRoutes from './routes/reviewRoutes';
+import userRoutes from './routes/userRoutes';
 
 const prisma = new PrismaClient();
 // Charger les variables d'environnement
@@ -22,6 +23,7 @@ app.use(express.json()); // Comprendre le format JSON entrant
 app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('🚀 Serveur OASE Waterfinder est en ligne !');
