@@ -37,11 +37,26 @@ export const addLocation = async (req: AuthRequest, res: Response): Promise<void
 };
 
 // --- RÉCUPÉRER TOUS LES POINTS (Pour la Carte) ---
+// --- RÉCUPÉRER TOUS LES POINTS (Avec Filtres EF4) ---
 export const getLocations = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // On ne récupère que les points disponibles (loc_available = true)
+    // On récupère le paramètre "type" s'il y en a un dans l'URL (?type=toilet)
+    const filterType = req.query.type as string;
+
+    // On prépare les conditions de recherche pour la Base de Données
+    // De base, on veut tous les points disponibles
+    let whereCondition: any = { 
+      loc_available: true 
+    };
+
+    // Si l'équipe React a demandé un type précis (toilet ou fountain)
+    if (filterType === 'toilet' || filterType === 'fountain') {
+      whereCondition.loc_type = filterType; // On ajoute le filtre à la condition
+    }
+
+    // On cherche dans la BDD avec nos conditions
     const locations = await prisma.location.findMany({
-      where: { loc_available: true }
+      where: whereCondition
     });
 
     res.status(200).json(locations);
