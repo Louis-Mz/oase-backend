@@ -1531,4 +1531,67 @@ C'est le moment de profiter de ton travail ! Fais ces deux tests très rapides :
 ---
 ---
 
+### La Toute Dernière Étape : Les Filtres (Exigence EF4)
 
+Le Cahier des Charges dit : *"EF4 : User can filter water points by predefined tags"*.
+
+L'équipe React va vouloir afficher *uniquement les toilettes* ou *uniquement les fontaines* sur sa carte. Il faut qu'ils puissent nous le demander dans l'URL, comme ça :
+👉 `GET /api/locations?type=toilet`
+
+On va modifier notre fonction **`getLocations`** (dans `locationController.ts`) pour qu'elle lise cette requête et filtre les résultats pour la base de données.
+
+Remplace ta fonction `getLocations` par celle-ci :
+
+```typescript
+// --- RÉCUPÉRER TOUS LES POINTS (Avec Filtres EF4) ---
+export const getLocations = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // On récupère le paramètre "type" s'il y en a un dans l'URL (?type=toilet)
+    const filterType = req.query.type as string;
+
+    // On prépare les conditions de recherche pour la Base de Données
+    // De base, on veut tous les points disponibles
+    let whereCondition: any = { 
+      loc_available: true 
+    };
+
+    // Si l'équipe React a demandé un type précis (toilet ou fountain)
+    if (filterType === 'toilet' || filterType === 'fountain') {
+      whereCondition.loc_type = filterType; // On ajoute le filtre à la condition
+    }
+
+    // On cherche dans la BDD avec nos conditions
+    const locations = await prisma.location.findMany({
+      where: whereCondition
+    });
+
+    res.status(200).json(locations);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur lors de la récupération des lieux." });
+  }
+};
+```
+
+### Le Test Final dans Thunder Client 🧪
+
+1.  Fais un **GET** sur `http://localhost:3000/api/locations` (N'oublie pas de mettre ton Token Bearer dans l'onglet Headers, car on avait mis le "videur" sur cette route !).
+    👉 *Tu verras TOUS les points d'eau.*
+2.  Maintenant, fais un **GET** sur `http://localhost:3000/api/locations?type=toilet`
+    👉 *Tu verras UNIQUEMENT les toilettes.*
+3.  Fais un **GET** sur `http://localhost:3000/api/locations?type=fountain`
+    👉 *Tu verras UNIQUEMENT les fontaines.*
+
+---
+
+### 🎊 FÉLICITATIONS ! 🎊
+
+Si tout ça fonctionne, **TU AS TERMINÉ LE BACK-END** demandé par le Cahier des Charges ! 
+
+Tu as couvert :
+✅ **EF1 & NFR5** : Sécurité, JWT, Mots de passe hashés avec Bcrypt.
+✅ **EF2** : Calcul mathématique de la distance (< 300m) grâce à la Formule de Haversine.
+✅ **EF4** : Filtrage dynamique des points d'eau (`?type=...`).
+✅ **EF5** : Gamification (Score utilisateur et Leaderboard).
+✅ **EF7** : Sécurité anti-spam (1 note par jour maximum).
+✅ Modélisation parfaite reliée à la base de données MySQL.
